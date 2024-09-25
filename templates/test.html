@@ -167,7 +167,7 @@
     <div class="card mb-3">
       <div class="card-header">Progress</div>
       <div class="card-body">
-        <div class="row mb-3 align-items-center">
+        <div class="row my-1 mb-3 align-items-center">
           <div class="col-sm-2 progress-label">Total Progress:</div>
           <div class="col-sm-6">
             <div class="progress">
@@ -183,6 +183,22 @@
         </div>
       </div>
     </div>
+
+    <!-- RTC Time Section -->
+    <div class="card mb-3">
+      <div class="card-header">RTC Time</div>
+      <div class="card-body">
+        <div class="row align-items-center">
+          <div class="col-sm-6">
+            <span>Pump Controller Time: <span id="pumpControllerTime">--:--:--</span></span>
+          </div>
+          <div class="col-sm-6">
+            <span>Autosampler Controller Time: <span id="autosamplerControllerTime">--:--:--</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
 
   <!-- Bootstrap JS Bundle with Popper -->

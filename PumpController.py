@@ -14,8 +14,7 @@ from Message import simple_Message
 
 class PumpController:
     def __init__(self, controller_id: int, port_name: str, serial_timeout: int):
-        # init the serial port but don't open it yet
-        self.serial_port = serial.Serial()
+        self.serial_port = serial.Serial()  # Init the serial port but don't open it yet
         self.serial_port.port = port_name
         self.serial_port.baudrate = 115200
         self.serial_port.timeout = serial_timeout
@@ -93,7 +92,7 @@ class PumpController:
         try:
             if self.is_connected() and not self.send_command_queue.empty():
                 command = self.send_command_queue.get(block=False)
-                self.serial_port.write(f"{command}\n".encode())
+                self.serial_port.write(f"{command.strip()}\n".encode())
                 # don't log the RTC time sync command
                 if "time" not in command:
                     logging.debug(f"PC -> Pico: {command}")
@@ -116,7 +115,6 @@ class PumpController:
                 # don't log the RTC time response
                 if "RTC Time" not in response:
                     logging.debug(f"Pico -> PC: {response}")
-
                 if "Info" in response:
                     self.query_pump_info(response_=response)
                 elif "Status" in response:
@@ -150,6 +148,17 @@ class PumpController:
             self.serial_port.write(f"{sync_command}\n".encode())
         except Exception as e:
             logging.error(f"Error synchronizing RTC with PC time: {e}")
+
+    def parse_rtc_time(self, response) -> None:
+        try:
+            match = re.search(r"RTC Time: (\d+-\d+-\d+ \d+:\d+:\d+)", response)
+            rtc_time = match.group(1)
+            if rtc_time:
+                self.status["rtc_time"] = datetime.strptime(
+                    rtc_time, "%Y-%m-%d %H:%M:%S"
+                ).timestamp()
+        except Exception as e:
+            logging.error(f"Error updating RTC time display: {e}")
 
     def query_pump_info(self, clear_existing=True, response_=None) -> None:
         """Query the pump info from the Pico."""
@@ -221,18 +230,6 @@ class PumpController:
                     f"We received a status update for a pump that does not exist: {pump_id}"
                 )
 
-    def parse_rtc_time(self, response) -> None:
-        try:
-            match = re.search(r"RTC Time: (\d+-\d+-\d+ \d+:\d+:\d+)", response)
-            rtc_time = match.group(1)
-            # parse the time string to a datetime object and convert it to a timestamp
-            if rtc_time:
-                self.status["rtc_time"] = datetime.strptime(
-                    rtc_time, "%Y-%m-%d %H:%M:%S"
-                ).timestamp()
-        except Exception as e:
-            logging.error(f"Error updating RTC time display: {e}")
-
     def shutdown(self) -> simple_Message:
         if self.is_connected():
             try:
@@ -254,13 +251,11 @@ class PumpController:
             except Exception as e:
                 logging.error(f"Error: {e}")
                 return simple_Message("Error", f"An error occurred: {e}")
-            
-    def query_rtc_time(self) -> simple_Message:
+
+    def query_rtc_time(self) -> None:
         if self.is_connected():
             try:
                 self.send_command_queue.put("0:time")
-                logging.info("Signal sent to query RTC time.")
-                return simple_Message("Success", "Signal sent to query RTC time.")
             except Exception as e:
                 logging.error(f"Error: {e}")
                 return simple_Message("Error", f"An error occurred: {e}")

@@ -33,13 +33,14 @@
           <!-- Pump Connection Buttons -->
           <div class="row mb-3">
             <div class="col-sm-12 d-flex justify-content-around">
-              <button type="button" class="btn btn-primary w-25" onclick="connectToPico()">
+              <button type="button" class="btn btn-primary w-25" id="connect_pico_button" onclick="connectToPico()">
                 Connect
               </button>
-              <button type="button" class="btn btn-secondary w-25" onclick="disconnectPico()" disabled>
+              <button type="button" class="btn btn-secondary w-25" id="disconnect_pico_button"
+                onclick="disconnectPico()" disabled>
                 Disconnect
               </button>
-              <button type="button" class="btn btn-danger w-25" onclick="resetPico()" disabled>
+              <button type="button" class="btn btn-danger w-25" id="reset_pico_button" onclick="resetPico()" disabled>
                 Hard Reset
               </button>
             </div>
@@ -60,13 +61,16 @@
           <!-- Autosampler Connection Buttons -->
           <div class="row">
             <div class="col-sm-12 d-flex justify-content-around">
-              <button type="button" class="btn btn-primary w-25" onclick="connectToPicoAs()">
+              <button type="button" class="btn btn-primary w-25" id="connect_pico_as_button"
+                onclick="connectToPicoAs()">
                 Connect
               </button>
-              <button type="button" class="btn btn-secondary w-25" onclick="disconnectPicoAs()" disabled>
+              <button type="button" class="btn btn-secondary w-25" id="disconnect_pico_as_button"
+                onclick="disconnectPicoAs()" disabled>
                 Disconnect
               </button>
-              <button type="button" class="btn btn-danger w-25" onclick="resetPicoAs()" disabled>
+              <button type="button" class="btn btn-danger w-25" id="reset_pico_as_button" onclick="resetPicoAs()"
+                disabled>
                 Hard Reset
               </button>
             </div>

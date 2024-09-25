@@ -7,8 +7,9 @@ import serial.tools.list_ports
 # gui imports
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
+import tkinterDnD
 import pystray
-from PIL import Image
+from PIL import Image, ImageDraw
 
 # other library
 import os

@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Latency Test</title>
+  </head>
+  <body>
+    <h1>Test Frontend-Backend Latency</h1>
+    <button onclick="testLatency()">Test Latency</button>
+    <p id="result"></p>
+
+    <script>
+      function testLatency() {
+        const startTime = Date.now();
+        fetch("/ping")
+          .then((response) => response.json())
+          .then((data) => {
+            const endTime = Date.now();
+            const latency = endTime - startTime;
+            document.getElementById(
+              "result"
+            ).innerText = `Latency: ${latency}ms\nServer Time: ${new Date(
+              data.server_time * 1000
+            ).toLocaleString()}`;
+          })
+          .catch((error) => {
+            document.getElementById("result").innerText = "Error: " + error;
+          });
+      }
+    </script>
+  </body>
+</html>

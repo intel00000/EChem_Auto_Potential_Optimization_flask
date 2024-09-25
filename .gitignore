@@ -1,0 +1,18 @@
+# ignore all file in folder Source Code
+Source Code/*
+build/*
+dist/*
+logs/*
+.vscode/*
+
+# ignore python virtual environment
+.venv/*
+pyvenv.cfg
+
+# exclude by extension
+*.pyc
+*.pyo
+*.log
+*.spec
+.micropico
+*.lck

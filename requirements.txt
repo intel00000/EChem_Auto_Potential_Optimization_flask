@@ -1,0 +1,8 @@
+flask
+Flask
+openpyxl
+pandas
+pyinstaller
+pyserial
+python-tkdnd
+pystray

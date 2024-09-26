@@ -36,6 +36,13 @@ class PumpController:
     def is_connected(self) -> bool:
         return self.serial_port is not None and self.serial_port.is_open
 
+    # a function to process all remaining messages in the queue
+    def process_all_messages(self) -> None:
+        while not self.send_command_queue.empty():
+            self.send_command()
+        while self.serial_port.in_waiting:
+            self.read_serial()
+
     def connect(self) -> simple_Message:
         """Connect to the serial port."""
         if self.is_connected():
@@ -58,10 +65,11 @@ class PumpController:
             sync_command = f"0:stime:{now.year}:{now.month}:{now.day}:{now.hour}:{now.minute}:{now.second}"
             self.serial_port.write(f"{sync_command}\n".encode())
             response = self.serial_port.readline().decode("utf-8").strip()
-            # issue a pump info query
-            self.query_pump_info()
+            self.query_rtc_time()  # Query RTC time
+            self.query_pump_info()  # issue a pump info query
             logging.info(f"Connected to {self.serial_port.name}")
             self.status.update({"connected": True})
+            self.process_all_messages()
             return simple_Message("Success", f"Connected to {self.serial_port.name}")
         except Exception as e:
             # attempt to disconnect if connection fails
@@ -75,10 +83,9 @@ class PumpController:
         """Disconnect from the serial port."""
         try:
             if self.is_connected():
-                # send a shutdown signal to the Pico
-                self.serial_port.write("0:shutdown\n".encode())
+                self.shutdown()  # send a shutdown signal
+                self.process_all_messages()  # process any remaining messages in the queue
                 self.serial_port.close()
-                self.send_command_queue.queue.clear()
                 logging.info(f"Disconnected from {self.serial_port.name}")
                 self.status.update(
                     {"connected": False, "pumps_info": {}, "rtc_time": -1}
@@ -103,14 +110,16 @@ class PumpController:
                     logging.debug(f"PC -> Pico: {command}")
         except serial.SerialException as e:
             self.disconnect()
-            logging.error(f"Error: disconnecting from {self.serial_port.name}: {e}")
+            logging.error(f"Error: SerialException from {self.serial_port.name}: {e}")
+            return simple_Message("Error", f"SerialException: {e}")
         except serial.SerialTimeoutException as e:
             self.disconnect()
             logging.error(f"Timeout error: {e}")
-            return simple_Message("Error", f"Timeout occurred: {e}")
+            return simple_Message("Error", f"Serial Timeout: {e}")
         except Exception as e:
             self.disconnect()
             logging.error(f"Error: {e}")
+            return simple_Message("Error", f"Error occurred: {e}")
 
     # set wait to true forces the function to wait for a response
     def read_serial(self, wait=False) -> simple_Message:
@@ -133,17 +142,19 @@ class PumpController:
                 return simple_Message("", "")
         except serial.SerialException as e:
             self.disconnect()
-            logging.error(f"Error: disconnecting from {self.serial_port.name}: {e}")
+            logging.error(f"Error: SerialException from {self.serial_port.name}: {e}")
+            return simple_Message("Error", f"SerialException: {e}")
         except serial.SerialTimeoutException as e:
             self.disconnect()
             logging.error(f"Timeout error: {e}")
-            return simple_Message("Error", f"Timeout occurred: {e}")
+            return simple_Message("Error", f"Serial Timeout: {e}")
         except Exception as e:
             self.disconnect()
             logging.error(f"Error: {e}")
-            return simple_Message("Error", f"An error occurred: {e}")
+            return simple_Message("Error", f"Error occurred: {e}")
 
     def query_rtc_time(self) -> None:
+        """Query the RTC time from the Pico."""
         if self.is_connected():
             try:
                 self.send_command_queue.put("0:time")
@@ -152,10 +163,12 @@ class PumpController:
                 return simple_Message("Error", f"An error occurred: {e}")
 
     def parse_rtc_time(self, response) -> None:
+        """Parse the RTC time from the response."""
         try:
+            # response format: RTC Time: 2024-9-26 11:47:39
             match = re.search(r"RTC Time: (\d+-\d+-\d+ \d+:\d+:\d+)", response)
             rtc_time = match.group(1)
-            if rtc_time:
+            if rtc_time:  # update the status dictionary
                 self.status["rtc_time"] = datetime.strptime(
                     rtc_time, "%Y-%m-%d %H:%M:%S"
                 ).timestamp()
@@ -182,7 +195,6 @@ class PumpController:
             matches = info_pattern.findall(response)
             # sort the matches by pump_id in ascending order
             matches = sorted(matches, key=lambda x: int(x[0]))
-
             for match in matches:
                 (
                     pump_id,

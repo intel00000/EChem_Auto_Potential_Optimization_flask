@@ -30,6 +30,9 @@ class AutosamplerController:
             "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "connected": False,
             "slots": [],
+            "slots_configuration": {},
+            "position": None,
+            "direction": None,
             "rtc_time": -1,
         }
         logging.info(f"Autosampler controller {controller_id} created.")
@@ -69,8 +72,13 @@ class AutosamplerController:
         """Disconnect from the serial port."""
         try:
             if self.is_connected():
+                # process any remaining messages in the queue
+                while not self.send_command_queue.empty():
+                    self.send_command()
+                while self.serial_port.in_waiting:
+                    self.read_serial()
+
                 self.serial_port.close()
-                self.send_command_queue.queue.clear()
                 logging.info(f"Disconnected from {self.serial_port.name}")
                 self.status.update({"connected": False, "slots": [], "rtc_time": -1})
                 return simple_Message(
@@ -107,6 +115,8 @@ class AutosamplerController:
                 response = self.serial_port.readline().decode("utf-8").strip()
                 if "RTC Time" not in response:
                     logging.debug(f"Autosampler -> PC: {response}")
+                if "Autosampler Status:" in response:
+                    self.parse_status(response)
                 if "Autosampler Configuration:" in response:
                     self.parse_config(response)
                 elif "RTC Time" in response:
@@ -182,7 +192,9 @@ class AutosamplerController:
                 if position.isdigit():
                     self.send_command_queue.put(f"position:{position}")
                     logging.info(f"Going to position command sent: {position}")
-                    return simple_Message("Success", f"Moving to position command sent: {position}")
+                    return simple_Message(
+                        "Success", f"Moving to position command sent: {position}"
+                    )
                 else:
                     return simple_Message("Error", "Invalid position input.")
             except Exception as e:
@@ -195,7 +207,9 @@ class AutosamplerController:
                 if slot in self.status["slots"]:
                     self.send_command_queue.put(f"slot:{slot}")
                     logging.info(f"Going to slot command sent: {slot}")
-                    return simple_Message("Success", f"Moving to slot command sent: {slot}")
+                    return simple_Message(
+                        "Success", f"Moving to slot command sent: {slot}"
+                    )
                 else:
                     return simple_Message("Error", "Invalid slot input.")
             except Exception as e:

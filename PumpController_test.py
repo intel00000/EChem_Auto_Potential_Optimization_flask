@@ -27,7 +27,11 @@ def test_pump_controller():
     if not pump_controller.is_connected():
         print("Failed to connect to the pump controller. Exiting test.")
         return
+    
+    pump_controller.send_command()
     pump_controller.read_serial(wait=True)
+    
+    print(f"Step 1: Status: {pump_controller.status}")
     
     # Step 3: Register a new pump with ID 6
     pump_id = 6

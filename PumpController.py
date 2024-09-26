@@ -44,8 +44,8 @@ class PumpController:
             self.serial_port.open()
             self.serial_port.reset_input_buffer()  # flush the input and output buffers
             self.serial_port.reset_output_buffer()
-            self.serial_port.write("0:ping\n".encode())  # identify Pico type
-            # read the response immediately
+            # identify Pico type
+            self.serial_port.write("0:ping\n".encode())
             response = self.serial_port.readline().decode("utf-8").strip()
             if "Pico Pump Control Version" not in response:
                 self.disconnect()  # we connect to the wrong device
@@ -53,8 +53,13 @@ class PumpController:
                     "Error",
                     "Connected to the wrong device. Please reconnect to continue.",
                 )
-            self.sync_rtc_with_pc_time()  # synchronize the RTC with the PC time
-            self.query_pump_info()  # issue a pump info query
+            # synchronize the RTC with the PC time
+            now = datetime.now()
+            sync_command = f"0:stime:{now.year}:{now.month}:{now.day}:{now.hour}:{now.minute}:{now.second}"
+            self.serial_port.write(f"{sync_command}\n".encode())
+            response = self.serial_port.readline().decode("utf-8").strip()
+            # issue a pump info query
+            self.query_pump_info()
             logging.info(f"Connected to {self.serial_port.name}")
             self.status.update({"connected": True})
             return simple_Message("Success", f"Connected to {self.serial_port.name}")
@@ -112,11 +117,10 @@ class PumpController:
         try:
             if self.is_connected() and (self.serial_port.in_waiting or wait):
                 response = self.serial_port.readline().decode("utf-8").strip()
-                # don't log the RTC time response
-                if "RTC Time" not in response:
+                if "RTC Time" not in response:  # don't log the RTC time response
                     logging.debug(f"Pico -> PC: {response}")
                 if "Info" in response:
-                    self.query_pump_info(response_=response)
+                    self.parse_pump_info(response=response)
                 elif "Status" in response:
                     self.parse_pump_status(response)
                 elif "RTC Time" in response:
@@ -125,29 +129,27 @@ class PumpController:
                     return simple_Message("Success", response)
                 elif "Error" in response:
                     return simple_Message("Error", response)
+                # return a placeholder message if no response will be returned
+                return simple_Message("", "")
         except serial.SerialException as e:
             self.disconnect()
-            logging.error(f"Error: {e}")
-            return simple_Message(
-                "Error",
-                f"Connection to Pico lost. Please reconnect to continue.",
-            )
+            logging.error(f"Error: disconnecting from {self.serial_port.name}: {e}")
+        except serial.SerialTimeoutException as e:
+            self.disconnect()
+            logging.error(f"Timeout error: {e}")
+            return simple_Message("Error", f"Timeout occurred: {e}")
         except Exception as e:
             self.disconnect()
             logging.error(f"Error: {e}")
             return simple_Message("Error", f"An error occurred: {e}")
 
-        # return a placeholder message if no response will be returned
-        return simple_Message("", "")
-
-    def sync_rtc_with_pc_time(self) -> None:
-        """Synchronize the Pico's RTC with the PC's time."""
-        try:
-            now = datetime.now()
-            sync_command = f"0:stime:{now.year}:{now.month}:{now.day}:{now.hour}:{now.minute}:{now.second}"
-            self.serial_port.write(f"{sync_command}\n".encode())
-        except Exception as e:
-            logging.error(f"Error synchronizing RTC with PC time: {e}")
+    def query_rtc_time(self) -> None:
+        if self.is_connected():
+            try:
+                self.send_command_queue.put("0:time")
+            except Exception as e:
+                logging.error(f"Error: {e}")
+                return simple_Message("Error", f"An error occurred: {e}")
 
     def parse_rtc_time(self, response) -> None:
         try:
@@ -160,19 +162,16 @@ class PumpController:
         except Exception as e:
             logging.error(f"Error updating RTC time display: {e}")
 
-    def query_pump_info(self, clear_existing=True, response_=None) -> None:
-        """Query the pump info from the Pico."""
-        if response_ is None:
-            # we have to issue the command
+    def query_pump_info(self) -> None:
+        if self.is_connected():
             try:
-                self.serial_port.write("0:info\n".encode())
-                response = self.serial_port.readline().decode("utf-8").strip()
+                self.send_command_queue.put("0:info")
             except Exception as e:
-                self.disconnect()
                 logging.error(f"Error: {e}")
-        else:
-            # the command is passed as an argument
-            response = response_
+                return simple_Message("Error", f"An error occurred: {e}")
+
+    def parse_pump_info(self, response, clear_existing=True) -> None:
+        """Parse the pump info response and update the status."""
         # clear the existing pump info
         if clear_existing:
             self.status["pumps_info"].clear()
@@ -209,6 +208,14 @@ class PumpController:
         except Exception as e:
             logging.error(f"Error: {e}")
 
+    def query_status(self) -> None:
+        if self.is_connected():
+            try:
+                self.send_command_queue.put("0:st")
+            except Exception as e:
+                logging.error(f"Error: {e}")
+                return simple_Message("Error", f"An error occurred: {e}")
+
     def parse_pump_status(self, response) -> None:
         status_pattern = re.compile(
             r"Pump(\d+) Status: Power: (ON|OFF), Direction: (CW|CCW)"
@@ -225,7 +232,7 @@ class PumpController:
             else:
                 # This mean we somehow received a status update for a pump that does not exist
                 # re-query the pump info
-                self.query_pump_info(clear_existing=False, response_=response)
+                self.query_pump_info()
                 logging.error(
                     f"We received a status update for a pump that does not exist: {pump_id}"
                 )
@@ -235,7 +242,7 @@ class PumpController:
             try:
                 self.send_command_queue.put("0:shutdown")
                 # update the status
-                self.update_status()
+                self.query_status()
                 logging.info("Signal sent for emergency shutdown.")
                 return simple_Message("Success", "Emergency shutdown signal sent.")
             except Exception as e:
@@ -252,31 +259,18 @@ class PumpController:
                 logging.error(f"Error: {e}")
                 return simple_Message("Error", f"An error occurred: {e}")
 
-    def query_rtc_time(self) -> None:
-        if self.is_connected():
-            try:
-                self.send_command_queue.put("0:time")
-            except Exception as e:
-                logging.error(f"Error: {e}")
-                return simple_Message("Error", f"An error occurred: {e}")
-
-    def update_status(self) -> None:
-        if self.is_connected():
-            # put the command in the queue
-            self.send_command_queue.put("0:st")
-
     def toggle_power(self, pump_id, update_status=True) -> None:
         if self.is_connected():
             self.send_command_queue.put(f"{pump_id}:pw")
             if update_status:
-                self.update_status()
+                self.query_status()
 
     def toggle_direction(self, pump_id, update_status=True) -> None:
         if self.is_connected():
             # put the command in the queue
             self.send_command_queue.put(f"{pump_id}:di")
             if update_status:
-                self.update_status()
+                self.query_status()
 
     def remove_pump(self, pump_id=0) -> simple_Message:
         if self.is_connected():
@@ -302,7 +296,7 @@ class PumpController:
             try:
                 self.send_command_queue.put(f"{pump_id}:save")
                 logging.info(f"Signal sent to save pump {pump_id} configuration.")
-                self.update_status()
+                self.query_status()
                 return simple_Message(
                     "Success", f"Signal sent to save pump {pump_id} configuration."
                 )
@@ -325,7 +319,7 @@ class PumpController:
                 command = f"{pump_id}:reg:{power_pin}:{direction_pin}:{initial_power_pin_value}:{initial_direction_pin_value}:{initial_power_status}:{initial_direction_status}"
                 self.send_command_queue.put(command)
                 # issue a pump info query
-                self.query_pump_info(clear_existing=False)
+                self.query_pump_info()
                 logging.info(f"Signal sent to register pump {pump_id}.")
                 return simple_Message(
                     "Success", f"Signal sent to register pump {pump_id}."

@@ -108,7 +108,7 @@ class AutosamplerController:
                 "Error", f"Failed to disconnect from {self.serial_port.name}: {e}"
             )
 
-    def send_command(self) -> None:  # queue to force chronological order
+    def send_command(self) -> simple_Message:  # queue to force chronological order
         try:
             if self.is_connected() and not self.send_command_queue.empty():
                 command = self.send_command_queue.get(block=False)
@@ -116,6 +116,7 @@ class AutosamplerController:
                 # don't log the RTC time sync command
                 if "time" not in command:
                     logging.debug(f"PC -> Pico: {command}")
+                return simple_Message("Success", f"Command sent: {command}")
         except serial.SerialException as e:
             self.disconnect()
             logging.error(f"Error: SerialException from {self.serial_port.name}: {e}")
@@ -170,7 +171,7 @@ class AutosamplerController:
                 logging.error(f"Error: {e}")
                 return simple_Message("Error", f"An error occurred: {e}")
 
-    def parse_rtc_time(self, response) -> None:
+    def parse_rtc_time(self, response: str) -> None:
         """Parse the RTC time from the response."""
         try:
             # response format: RTC Time: 2024-9-26 11:47:39
@@ -191,14 +192,15 @@ class AutosamplerController:
             except Exception as e:
                 logging.error(f"Error querying configuration: {e}")
 
-    def parse_config(self, response) -> None:
+    def parse_config(self, response: str) -> None:
         """Parse slots configuration from the Pico."""
         try:
             config_str = response.replace("Autosampler Configuration:", "").strip()
             autosampler_config = json.loads(config_str)
             self.status["slots_configuration"] = autosampler_config
             self.status["slots"] = sorted(
-                autosampler_config.keys(), key=lambda x: int(x)
+                autosampler_config.keys(),
+                key=lambda x: (not x.isdigit(), int(x) if x.isdigit() else x.lower()),
             )  # sort in ascending order
             logging.info(f"Slots populated: {self.status['slots']}")
         except json.JSONDecodeError as e:
@@ -214,7 +216,7 @@ class AutosamplerController:
             except Exception as e:
                 logging.error(f"Error querying status: {e}")
 
-    def parse_status(self, response) -> None:
+    def parse_status(self, response: str) -> None:
         """Parse autosampler status, including position and direction."""
         try:
             match = re.search(r"position: *(\d+),\s*direction: (Left|Right)", response)
@@ -227,32 +229,24 @@ class AutosamplerController:
         except Exception as e:
             logging.error(f"Error parsing status: {e}")
 
-    def goto_position(self, position: str) -> simple_Message:
+    def goto_position(self, position: str) -> None:
         if self.is_connected():
             try:
                 if position.isdigit():
                     self.send_command_queue.put(f"position:{position}")
                     logging.info(f"Going to position command sent: {position}")
-                    return simple_Message(
-                        "Success", f"Moving to position command sent: {position}"
-                    )
                 else:
-                    return simple_Message("Error", "Invalid position input.")
+                    logging.error("Invalid position input.")
             except Exception as e:
                 logging.error(f"Error going to position: {e}")
-                return simple_Message("Error", f"An error occurred: {e}")
 
-    def goto_slot(self, slot: str) -> simple_Message:
+    def goto_slot(self, slot: str) -> None:
         if self.is_connected():
             try:
                 if slot in self.status["slots"]:
                     self.send_command_queue.put(f"slot:{slot}")
                     logging.info(f"Going to slot command sent: {slot}")
-                    return simple_Message(
-                        "Success", f"Moving to slot command sent: {slot}"
-                    )
                 else:
-                    return simple_Message("Error", "Invalid slot input.")
+                    logging.error("Invalid slot input.")
             except Exception as e:
                 logging.error(f"Error going to slot: {e}")
-                return simple_Message("Error", f"An error occurred: {e}")

@@ -162,7 +162,7 @@ class PumpController:
                 logging.error(f"Error: {e}")
                 return simple_Message("Error", f"An error occurred: {e}")
 
-    def parse_rtc_time(self, response) -> None:
+    def parse_rtc_time(self, response: str) -> None:
         """Parse the RTC time from the response."""
         try:
             # response format: RTC Time: 2024-9-26 11:47:39
@@ -183,7 +183,7 @@ class PumpController:
                 logging.error(f"Error: {e}")
                 return simple_Message("Error", f"An error occurred: {e}")
 
-    def parse_pump_info(self, response, clear_existing=True) -> None:
+    def parse_pump_info(self, response: str, clear_existing=True) -> None:
         """Parse the pump info response and update the status."""
         # clear the existing pump info
         if clear_existing:
@@ -228,7 +228,7 @@ class PumpController:
                 logging.error(f"Error: {e}")
                 return simple_Message("Error", f"An error occurred: {e}")
 
-    def parse_pump_status(self, response) -> None:
+    def parse_pump_status(self, response: str) -> None:
         status_pattern = re.compile(
             r"Pump(\d+) Status: Power: (ON|OFF), Direction: (CW|CCW)"
         )
@@ -249,27 +249,22 @@ class PumpController:
                     f"We received a status update for a pump that does not exist: {pump_id}"
                 )
 
-    def shutdown(self) -> simple_Message:
+    def shutdown(self) -> None:
         if self.is_connected():
             try:
                 self.send_command_queue.put("0:shutdown")
-                # update the status
-                self.query_status()
+                self.query_status()  # update the status
                 logging.info("Signal sent for emergency shutdown.")
-                return simple_Message("Success", "Emergency shutdown signal sent.")
             except Exception as e:
                 logging.error(f"Error: {e}")
-                return simple_Message("Error", f"An error occurred: {e}")
 
-    def reset_pico(self) -> simple_Message:
+    def reset_pico(self) -> None:
         if self.is_connected():
             try:
                 self.send_command_queue.put("0:reset")
                 logging.info("Signal sent for Pico reset.")
-                return simple_Message("Success", "Pico reset signal sent.")
             except Exception as e:
                 logging.error(f"Error: {e}")
-                return simple_Message("Error", f"An error occurred: {e}")
 
     def toggle_power(self, pump_id, update_status=True) -> None:
         if self.is_connected():
@@ -279,42 +274,27 @@ class PumpController:
 
     def toggle_direction(self, pump_id, update_status=True) -> None:
         if self.is_connected():
-            # put the command in the queue
             self.send_command_queue.put(f"{pump_id}:di")
             if update_status:
                 self.query_status()
 
-    def remove_pump(self, pump_id=0) -> simple_Message:
+    def remove_pump(self, pump_id=0) -> None:
         if self.is_connected():
             try:
-                if pump_id == 0:
-                    self.send_command_queue.put("0:clr")
-                    # issue a pump info query
-                    self.query_pump_info()
-                else:
-                    self.send_command_queue.put(f"{pump_id}:clr")
-                    # issue a pump info query
-                    self.query_pump_info()
+                self.send_command_queue.put(f"{pump_id}:clr")
+                self.query_pump_info()
                 logging.info(f"Signal sent to remove pump {pump_id}.")
-                return simple_Message(
-                    "Success", f"Signal sent to remove pump {pump_id}."
-                )
             except Exception as e:
                 logging.error(f"Error: {e}")
-                return simple_Message("Error", f"An error occurred: {e}")
 
-    def save_config(self, pump_id=0) -> simple_Message:
+    def save_config(self, pump_id=0) -> None:
         if self.is_connected():
             try:
                 self.send_command_queue.put(f"{pump_id}:save")
                 logging.info(f"Signal sent to save pump {pump_id} configuration.")
                 self.query_status()
-                return simple_Message(
-                    "Success", f"Signal sent to save pump {pump_id} configuration."
-                )
             except Exception as e:
                 logging.error(f"Error: {e}")
-                return simple_Message("Error", f"An error occurred: {e}")
 
     def register_pump(
         self,
@@ -325,7 +305,7 @@ class PumpController:
         initial_direction_pin_value,
         initial_power_status,
         initial_direction_status,
-    ) -> simple_Message:
+    ) -> None:
         if self.is_connected():
             try:
                 command = f"{pump_id}:reg:{power_pin}:{direction_pin}:{initial_power_pin_value}:{initial_direction_pin_value}:{initial_power_status}:{initial_direction_status}"
@@ -333,9 +313,5 @@ class PumpController:
                 # issue a pump info query
                 self.query_pump_info()
                 logging.info(f"Signal sent to register pump {pump_id}.")
-                return simple_Message(
-                    "Success", f"Signal sent to register pump {pump_id}."
-                )
             except Exception as e:
                 logging.error(f"Error: {e}")
-                return simple_Message("Error", f"An error occurred: {e}")

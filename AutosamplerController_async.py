@@ -34,10 +34,10 @@ class AutosamplerController:
     def is_connected(self) -> bool:
         return self.serial_port is not None and self.serial_port.is_open
 
-    def connect(self) -> str:
-        """Connect to the serial port."""
+    async def connect(self) -> str:
+        """Connect to the serial port asynchronously."""
         if self.is_connected():
-            self.disconnect()
+            await self.disconnect()
         try:
             self.serial_port.open()
             # Flush the input and output buffers
@@ -48,29 +48,28 @@ class AutosamplerController:
             self.serial_port.write("0:ping\n".encode())
             response = self.serial_port.readline().decode("utf-8").strip()
             if "Pico Autosampler Control Version" not in response:
-                self.disconnect()  # Wrong device
+                await self.disconnect()  # Wrong device
                 return "Error: Connected to the wrong device."
 
-            # synchronize the time with PC
+            # Synchronize the time with PC
             now = datetime.now()
             sync_command = f"0:stime:{now.year}:{now.month}:{now.day}:{now.hour}:{now.minute}:{now.second}"
             self.serial_port.write(f"{sync_command}\n".encode())
             response = self.serial_port.readline().decode("utf-8").strip()
 
-            self.query_rtc_time()  # Query time
-            self.query_config()  # Query slots information
-            self.query_status()  # Query autosampler status
+            await self.query_rtc_time()  # Query time
+            await self.query_config()  # Query slots information
+            await self.query_status()  # Query autosampler status
             self.status.update({"connected": True})
             logging.info(f"Connected to {self.serial_port.name}")
             return f"Success: Connected to {self.serial_port.name}"
         except Exception as e:
-            # attempt to disconnect if connection fails
-            self.disconnect()
+            await self.disconnect()
             logging.error(f"Failed to connect to {self.serial_port.name}: {e}")
             return f"Error: Failed to connect to {self.serial_port.name}: {e}"
 
-    def disconnect(self) -> str:
-        """Disconnect from the serial port."""
+    async def disconnect(self) -> str:
+        """Disconnect from the serial port asynchronously."""
         try:
             if self.is_connected():
                 self.serial_port.close()  # close the serial port
@@ -100,12 +99,12 @@ class AutosamplerController:
                     logging.debug(f"PC -> Pico: {command}")
                 return f"Success: Command sent: {command}"
         except serial.SerialException as e:
-            self.disconnect()
             logging.error(f"Error: SerialException from {self.serial_port.name}: {e}")
+            await self.disconnect()
             return f"Error: SerialException: {e}"
         except serial.SerialTimeoutException as e:
-            self.disconnect()
             logging.error(f"Serial Timeout error: {e}")
+            await self.disconnect()
             return f"Error: Serial Timeout: {e}"
         except Exception as e:
             logging.error(f"Error: Failed to send command: {e}")
@@ -154,7 +153,6 @@ class AutosamplerController:
 
     async def query_rtc_time(self) -> None:
         """Query the RTC time asynchronously."""
-        # Concurrently send the command and read the response
         await self.run_command_and_read("time", "RTC Time", self.parse_rtc_time)
 
     async def parse_rtc_time(self, response: str) -> None:
@@ -170,15 +168,13 @@ class AutosamplerController:
         except Exception as e:
             logging.error(f"Error updating RTC time display: {e}")
 
-    def query_config(self) -> None:
-        """Query the slots configuration from the Pico."""
-        if self.is_connected():
-            try:
-                self.send_command_queue.put("config")
-            except Exception as e:
-                logging.error(f"Error querying configuration: {e}")
+    async def query_config(self) -> None:
+        """Query the slots configuration asynchronously."""
+        await self.run_command_and_read(
+            "config", "Autosampler Configuration", self.parse_config
+        )
 
-    def parse_config(self, response: str) -> None:
+    async def parse_config(self, response: str) -> None:
         """Parse slots configuration from the Pico."""
         try:
             config_str = response.replace("Autosampler Configuration:", "").strip()
@@ -194,15 +190,13 @@ class AutosamplerController:
         except Exception as e:
             logging.error(f"Error updating slots configuration: {e}")
 
-    def query_status(self) -> None:
-        """Query the autosampler status."""
-        if self.is_connected():
-            try:
-                self.send_command_queue.put("status")
-            except Exception as e:
-                logging.error(f"Error querying status: {e}")
+    async def query_status(self) -> None:
+        """Query the autosampler status asynchronously."""
+        await self.run_command_and_read(
+            "status", "Autosampler Status", self.parse_status
+        )
 
-    def parse_status(self, response: str) -> None:
+    async def parse_status(self, response: str) -> None:
         """Parse autosampler status, including position and direction."""
         try:
             match = re.search(r"position: *(\d+),\s*direction: (Left|Right)", response)
@@ -215,23 +209,43 @@ class AutosamplerController:
         except Exception as e:
             logging.error(f"Error parsing status: {e}")
 
-    def goto_position(self, position: str) -> None:
+    async def goto_position(self, position: str) -> None:
+        """Go to a specific position asynchronously."""
         if self.is_connected():
             try:
                 if position.isdigit():
-                    self.send_command_queue.put(f"position:{position}")
-                    logging.info(f"Going to position command sent: {position}")
+                    await self.run_command_and_read(
+                        f"position:{position}",
+                        None,
+                        lambda x: logging.info(f"Going to position: {position}"),
+                    )
                 else:
                     logging.error("Invalid position input.")
             except Exception as e:
                 logging.error(f"Error going to position: {e}")
+    
+    # return format: Info: moved to position 1000 in 0.004037 seconds. relative position: 0
+    async def parse_goto_position(self, response: str) -> None:
+        try:
+            match = re.search(r"moved to position (\d+) in (\d+\.\d+) seconds. relative position: (\d+)", response)
+            if match:
+                position = int(match.group(1))
+                # update the status dictionary
+                self.status["position"] = position
+                logging.info(f"Moved to position {position}")
+        except Exception as e:
+            logging.error(f"Error parsing goto position response: {e}")
 
-    def goto_slot(self, slot: str) -> None:
+    async def goto_slot(self, slot: str) -> None:
+        """Go to a specific slot asynchronously."""
         if self.is_connected():
             try:
                 if slot in self.status["slots"]:
-                    self.send_command_queue.put(f"slot:{slot}")
-                    logging.info(f"Going to slot command sent: {slot}")
+                    await self.run_command_and_read(
+                        f"slot:{slot}",
+                        None,
+                        lambda x: logging.info(f"Going to slot: {slot}"),
+                    )
                 else:
                     logging.error("Invalid slot input.")
             except Exception as e:

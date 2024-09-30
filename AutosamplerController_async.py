@@ -1,34 +1,42 @@
-# pyserial imports
-import serial
-import serial.tools.list_ports
-
-# other library
 import re
 import json
+import serial
 import asyncio
 import logging
 from datetime import datetime
+from multiprocessing import Lock, Manager
 
 
 class AutosamplerController:
-    def __init__(self, controller_id: int, port_name: str, serial_timeout: int):
+    def __init__(
+        self,
+        controller_id: int,
+        port_name: str,
+        serial_timeout: int,
+        lock: Lock,
+        manager: Manager,
+    ):
         self.serial_port = serial.Serial()  # Init the serial port but don't open it yet
         self.serial_port.port = port_name
         self.serial_port.baudrate = 115200
         self.serial_port.timeout = serial_timeout
+        self.lock = lock  # Lock to ensure safe access to shared dictionary
 
-        # Dictionary to store status of this autosampler controller
-        self.status = {
-            "serial_port": self.serial_port.name,
-            "controller_id": controller_id,
-            "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "connected": False,
-            "slots": [],
-            "slots_configuration": {},
-            "position": None,
-            "direction": None,
-            "rtc_time": -1,
-        }
+        # Shared dictionary to store the status
+        self.status = manager.dict(
+            {
+                "serial_port": self.serial_port.name,
+                "controller_id": controller_id,
+                "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "connected": False,
+                "slots": [],
+                "slots_configuration": {},
+                "position": None,
+                "direction": None,
+                "rtc_time": -1,
+            }
+        )
+
         logging.info(f"Autosampler controller {controller_id} created.")
 
     def is_connected(self) -> bool:
@@ -40,7 +48,6 @@ class AutosamplerController:
             await self.disconnect()
         try:
             self.serial_port.open()
-            # Flush the input and output buffers
             self.serial_port.reset_input_buffer()
             self.serial_port.reset_output_buffer()
 
@@ -60,7 +67,9 @@ class AutosamplerController:
             await self.query_rtc_time()  # Query time
             await self.query_config()  # Query slots information
             await self.query_status()  # Query autosampler status
-            self.status.update({"connected": True})
+            # Safely update the shared status dictionary
+            with self.lock:
+                self.status.update({"connected": True})
             logging.info(f"Connected to {self.serial_port.name}")
             return f"Success: Connected to {self.serial_port.name}"
         except Exception as e:
@@ -74,16 +83,18 @@ class AutosamplerController:
             if self.is_connected():
                 self.serial_port.close()  # close the serial port
                 logging.info(f"Disconnected from {self.serial_port.name}")
-                self.status.update(
-                    {
-                        "connected": False,
-                        "slots": [],
-                        "slots_configuration": {},
-                        "position": None,
-                        "direction": None,
-                        "rtc_time": -1,
-                    }
-                )
+                # Reset the status dictionary
+                with self.lock:
+                    self.status.update(
+                        {
+                            "connected": False,
+                            "slots": [],
+                            "slots_configuration": {},
+                            "position": None,
+                            "direction": None,
+                            "rtc_time": -1,
+                        }
+                    )
                 return f"Success: Disconnected from {self.serial_port.name}"
         except Exception as e:
             logging.error(f"Failed to disconnect from {self.serial_port.name}: {e}")
@@ -94,27 +105,24 @@ class AutosamplerController:
         try:
             if self.is_connected():
                 self.serial_port.write(f"{command.strip()}\n".encode())
-                # don't log the RTC time sync command
                 if "time" not in command:
                     logging.debug(f"PC -> Pico: {command}")
                 return f"Success: Command sent: {command}"
         except serial.SerialException as e:
-            logging.error(f"Error: SerialException from {self.serial_port.name}: {e}")
             await self.disconnect()
+            logging.error(f"Error: SerialException from {self.serial_port.name}: {e}")
             return f"Error: SerialException: {e}"
         except serial.SerialTimeoutException as e:
-            logging.error(f"Serial Timeout error: {e}")
             await self.disconnect()
+            logging.error(f"Serial Timeout error: {e}")
             return f"Error: Serial Timeout: {e}"
         except Exception as e:
-            logging.error(f"Error: Failed to send command: {e}")
             await self.disconnect()
+            logging.error(f"Error: Failed to send command: {e}")
             return f"Error: Failed to send command: {e}"
 
-    # simply read the serial port and return the response
-    # check if specific keyword is in the response, None is returned if not found
     async def read_serial(self, keyword: str = None) -> str:
-        """Read serial data asynchronously."""
+        """Read serial data asynchronously, check if specific keyword is in the response."""
         response = None
         try:
             if self.is_connected():
@@ -138,16 +146,15 @@ class AutosamplerController:
             return response
 
     async def run_command_and_read(self, command: str, keyword: str, callback):
-        """Run send_command and read_serial concurrently."""
-        # Use asyncio.gather to run them concurrently
-        send_task = self.send_command(command)
-        read_task = self.read_serial(keyword)
+        """Run send_command and read_serial concurrently using TaskGroup."""
+        # Create a TaskGroup to run tasks concurrently
+        async with asyncio.TaskGroup() as tg:
+            # Add send_command task to the group
+            send_task = tg.create_task(self.send_command(command))
+            # Add read_serial task to the group
+            read_task = tg.create_task(self.read_serial(keyword))
 
-        # Wait for both tasks to complete
-        await asyncio.gather(send_task, read_task)
-
-        # If the response contains the expected keyword, process it with the callback
-        response = await read_task
+        response = read_task.result()
         if response:
             await callback(response)
 
@@ -161,10 +168,11 @@ class AutosamplerController:
             # response format: RTC Time: 2024-9-26 11:47:39
             match = re.search(r"RTC Time: (\d+-\d+-\d+ \d+:\d+:\d+)", response)
             rtc_time = match.group(1)
-            if rtc_time:  # update the status dictionary
-                self.status["rtc_time"] = datetime.strptime(
-                    rtc_time, "%Y-%m-%d %H:%M:%S"
-                ).timestamp()
+            if rtc_time:
+                with self.lock:
+                    self.status["rtc_time"] = datetime.strptime(
+                        rtc_time, "%Y-%m-%d %H:%M:%S"
+                    ).timestamp()
         except Exception as e:
             logging.error(f"Error updating RTC time display: {e}")
 
@@ -179,11 +187,15 @@ class AutosamplerController:
         try:
             config_str = response.replace("Autosampler Configuration:", "").strip()
             autosampler_config = json.loads(config_str)
-            self.status["slots_configuration"] = autosampler_config
-            self.status["slots"] = sorted(
-                autosampler_config.keys(),
-                key=lambda x: (not x.isdigit(), int(x) if x.isdigit() else x.lower()),
-            )  # sort in ascending order
+            with self.lock:
+                self.status["slots_configuration"] = autosampler_config
+                self.status["slots"] = sorted(
+                    autosampler_config.keys(),
+                    key=lambda x: (
+                        not x.isdigit(),
+                        int(x) if x.isdigit() else x.lower(),
+                    ),
+                )
             logging.info(f"Slots populated: {self.status['slots']}")
         except json.JSONDecodeError as e:
             logging.error(f"Error decoding configuration: {e}")
@@ -201,8 +213,13 @@ class AutosamplerController:
         try:
             match = re.search(r"position: *(\d+),\s*direction: (Left|Right)", response)
             if match:
-                self.status["position"] = int(match.group(1))
-                self.status["direction"] = match.group(2)
+                with self.lock:
+                    self.status.update(
+                        {
+                            "position": int(match.group(1)),
+                            "direction": match.group(2),
+                        }
+                    )
                 logging.info(
                     f"Autosampler status: position {self.status['position']}, direction {self.status['direction']}"
                 )
@@ -210,43 +227,78 @@ class AutosamplerController:
             logging.error(f"Error parsing status: {e}")
 
     async def goto_position(self, position: str) -> None:
-        """Go to a specific position asynchronously."""
+        """Go to a specific position and update status."""
         if self.is_connected():
             try:
                 if position.isdigit():
                     await self.run_command_and_read(
                         f"position:{position}",
-                        None,
-                        lambda x: logging.info(f"Going to position: {position}"),
+                        "moved to position",  # Look for this keyword in the response
+                        self.parse_goto_position,  # Callback to handle the response
                     )
                 else:
                     logging.error("Invalid position input.")
             except Exception as e:
                 logging.error(f"Error going to position: {e}")
-    
-    # return format: Info: moved to position 1000 in 0.004037 seconds. relative position: 0
+
+    # Example response: moved to position 1000 in 0.004037 seconds. relative position: 0
     async def parse_goto_position(self, response: str) -> None:
+        """Parse the response from the goto_position command and update status."""
         try:
-            match = re.search(r"moved to position (\d+) in (\d+\.\d+) seconds. relative position: (\d+)", response)
+            match = re.search(
+                r"moved to position (\d+) in (\d+\.\d+) seconds. relative position: (\d+)",
+                response,
+            )
             if match:
                 position = int(match.group(1))
-                # update the status dictionary
-                self.status["position"] = position
-                logging.info(f"Moved to position {position}")
+                relative_position = int(match.group(3))
+                # Safely update the status dictionary with lock
+                with self.lock:
+                    self.status["position"] = position
+                logging.info(
+                    f"Moved to position {position} (relative position: {relative_position})"
+                )
+            else:
+                logging.error(f"Invalid response format for position: {response}")
         except Exception as e:
             logging.error(f"Error parsing goto position response: {e}")
 
     async def goto_slot(self, slot: str) -> None:
-        """Go to a specific slot asynchronously."""
+        """Go to a specific slot asynchronously and update status."""
         if self.is_connected():
             try:
                 if slot in self.status["slots"]:
+                    # Run the command and parse the response
                     await self.run_command_and_read(
                         f"slot:{slot}",
-                        None,
-                        lambda x: logging.info(f"Going to slot: {slot}"),
+                        "moved to slot",  # Look for this keyword in the response
+                        self.parse_goto_slot,  # Callback to handle the response
                     )
                 else:
                     logging.error("Invalid slot input.")
             except Exception as e:
                 logging.error(f"Error going to slot: {e}")
+
+    # Response format: Info: moved to slot 1 in 0.005856 seconds. relative position: 0
+    async def parse_goto_slot(self, response: str) -> None:
+        """Parse the response from the goto_slot command and update status."""
+        try:
+            # Use regex to extract slot and relative position from the response
+            match = re.search(
+                r"moved to slot (\d+) in (\d+\.\d+) seconds. relative position: (\d+)",
+                response,
+            )
+            if match:
+                slot = int(match.group(1))
+                relative_position = int(match.group(3))
+                # Safely update the status dictionary with lock
+                with self.lock:
+                    self.status["slot"] = slot
+                    self.status["relative_position"] = relative_position
+                logging.info(
+                    f"Moved to slot {slot} (relative position: {relative_position})"
+                )
+            else:
+                logging.error(f"Invalid response format for slot: {response}")
+        except Exception as e:
+            logging.error(f"Error parsing goto slot response: {e}")

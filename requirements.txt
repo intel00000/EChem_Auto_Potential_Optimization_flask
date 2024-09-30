@@ -4,5 +4,6 @@ openpyxl
 pandas
 pyinstaller
 pyserial
+pyserial-asyncio
 python-tkdnd
 pystray

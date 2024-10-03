@@ -133,6 +133,9 @@ class AutosamplerController:
                 # check if the keyword is in the response
                 if keyword and keyword not in response:
                     response = None
+                    logging.warning(
+                        f"Expected keyword '{keyword}' not found in response."
+                    )
         except serial.SerialException as e:
             await self.disconnect()
             logging.error(f"Error: SerialException from {self.serial_port.name}: {e}")
@@ -147,16 +150,20 @@ class AutosamplerController:
 
     async def run_command_and_read(self, command: str, keyword: str, callback):
         """Run send_command and read_serial concurrently using TaskGroup."""
-        # Create a TaskGroup to run tasks concurrently
-        async with asyncio.TaskGroup() as tg:
-            # Add send_command task to the group
-            send_task = tg.create_task(self.send_command(command))
-            # Add read_serial task to the group
-            read_task = tg.create_task(self.read_serial(keyword))
+        try:
+            async with asyncio.TaskGroup() as tg:
+                # Add send_command task to the group
+                send_task = tg.create_task(self.send_command(command))
+                # Add read_serial task to the group
+                read_task = tg.create_task(self.read_serial(keyword))
 
-        response = read_task.result()
-        if response:
-            await callback(response)
+            response = read_task.result()
+            if response:
+                await callback(response)
+            else:
+                logging.error(f"No valid response received for command: {command}")
+        except Exception as e:
+            logging.error(f"Error in run_command_and_read: {e}")
 
     async def query_rtc_time(self) -> None:
         """Query the RTC time asynchronously."""
@@ -165,16 +172,21 @@ class AutosamplerController:
     async def parse_rtc_time(self, response: str) -> None:
         """Parse the RTC time from the response."""
         try:
-            # response format: RTC Time: 2024-9-26 11:47:39
             match = re.search(r"RTC Time: (\d+-\d+-\d+ \d+:\d+:\d+)", response)
+            if match:
             rtc_time = match.group(1)
+            rtc_time = match.group(1)
+            if rtc_time:
+                rtc_time = match.group(1)
             if rtc_time:
                 with self.lock:
                     self.status["rtc_time"] = datetime.strptime(
                         rtc_time, "%Y-%m-%d %H:%M:%S"
                     ).timestamp()
+            else:
+                logging.error(f"Failed to parse RTC time from response: {response}")
         except Exception as e:
-            logging.error(f"Error updating RTC time display: {e}")
+            logging.error(f"Error parsing RTC time: {e}")
 
     async def query_config(self) -> None:
         """Query the slots configuration asynchronously."""
@@ -223,6 +235,8 @@ class AutosamplerController:
                 logging.info(
                     f"Autosampler status: position {self.status['position']}, direction {self.status['direction']}"
                 )
+            else:
+                logging.error(f"Invalid status response: {response}")
         except Exception as e:
             logging.error(f"Error parsing status: {e}")
 
@@ -252,7 +266,6 @@ class AutosamplerController:
             if match:
                 position = int(match.group(1))
                 relative_position = int(match.group(3))
-                # Safely update the status dictionary with lock
                 with self.lock:
                     self.status["position"] = position
                 logging.info(
@@ -268,7 +281,6 @@ class AutosamplerController:
         if self.is_connected():
             try:
                 if slot in self.status["slots"]:
-                    # Run the command and parse the response
                     await self.run_command_and_read(
                         f"slot:{slot}",
                         "moved to slot",  # Look for this keyword in the response
@@ -283,7 +295,6 @@ class AutosamplerController:
     async def parse_goto_slot(self, response: str) -> None:
         """Parse the response from the goto_slot command and update status."""
         try:
-            # Use regex to extract slot and relative position from the response
             match = re.search(
                 r"moved to slot (\d+) in (\d+\.\d+) seconds. relative position: (\d+)",
                 response,
@@ -291,7 +302,6 @@ class AutosamplerController:
             if match:
                 slot = int(match.group(1))
                 relative_position = int(match.group(3))
-                # Safely update the status dictionary with lock
                 with self.lock:
                     self.status["slot"] = slot
                     self.status["relative_position"] = relative_position

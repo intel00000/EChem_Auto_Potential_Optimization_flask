@@ -15,12 +15,14 @@ class AutosamplerController:
         serial_timeout: int,
         lock: Lock,
         manager: Manager,
+        logger: logging.Logger,
     ):
         self.serial_port = serial.Serial()  # Init the serial port but don't open it yet
         self.serial_port.port = port_name
         self.serial_port.baudrate = 115200
-        self.serial_port.timeout = serial_timeout
+        self.serial_port.timeout = None
         self.lock = lock  # Lock to ensure safe access to shared dictionary
+        self.logger = logger
 
         # Shared dictionary to store the status
         self.status = manager.dict(
@@ -37,7 +39,7 @@ class AutosamplerController:
             }
         )
 
-        logging.info(f"Autosampler controller {controller_id} created.")
+        self.logger.info(f"Autosampler controller {controller_id} created.")
 
     def is_connected(self) -> bool:
         return self.serial_port is not None and self.serial_port.is_open
@@ -70,11 +72,11 @@ class AutosamplerController:
             # Safely update the shared status dictionary
             with self.lock:
                 self.status.update({"connected": True})
-            logging.info(f"Connected to {self.serial_port.name}")
+            self.logger.info(f"Connected to {self.serial_port.name}")
             return f"Success: Connected to {self.serial_port.name}"
         except Exception as e:
             await self.disconnect()
-            logging.error(f"Failed to connect to {self.serial_port.name}: {e}")
+            self.logger.error(f"Failed to connect to {self.serial_port.name}: {e}")
             return f"Error: Failed to connect to {self.serial_port.name}: {e}"
 
     async def disconnect(self) -> str:
@@ -82,7 +84,7 @@ class AutosamplerController:
         try:
             if self.is_connected():
                 self.serial_port.close()  # close the serial port
-                logging.info(f"Disconnected from {self.serial_port.name}")
+                self.logger.info(f"Disconnected from {self.serial_port.name}")
                 # Reset the status dictionary
                 with self.lock:
                     self.status.update(
@@ -97,7 +99,7 @@ class AutosamplerController:
                     )
                 return f"Success: Disconnected from {self.serial_port.name}"
         except Exception as e:
-            logging.error(f"Failed to disconnect from {self.serial_port.name}: {e}")
+            self.logger.error(f"Failed to disconnect from {self.serial_port.name}: {e}")
             return f"Error: Failed to disconnect from {self.serial_port.name}: {e}"
 
     async def send_command(self, command: str) -> str:
@@ -106,19 +108,21 @@ class AutosamplerController:
             if self.is_connected():
                 self.serial_port.write(f"{command.strip()}\n".encode())
                 if "time" not in command:
-                    logging.debug(f"PC -> Pico: {command}")
+                    self.logger.debug(f"PC -> Pico: {command}")
                 return f"Success: Command sent: {command}"
         except serial.SerialException as e:
             await self.disconnect()
-            logging.error(f"Error: SerialException from {self.serial_port.name}: {e}")
+            self.logger.error(
+                f"Error: SerialException from {self.serial_port.name}: {e}"
+            )
             return f"Error: SerialException: {e}"
         except serial.SerialTimeoutException as e:
             await self.disconnect()
-            logging.error(f"Serial Timeout error: {e}")
+            self.logger.error(f"Serial Timeout error: {e}")
             return f"Error: Serial Timeout: {e}"
         except Exception as e:
             await self.disconnect()
-            logging.error(f"Error: Failed to send command: {e}")
+            self.logger.error(f"Error: Failed to send command: {e}")
             return f"Error: Failed to send command: {e}"
 
     async def read_serial(self, keyword: str = None) -> str:
@@ -129,22 +133,24 @@ class AutosamplerController:
                 # read the serial port, will block until a response is received
                 response = self.serial_port.readline().decode("utf-8").strip()
                 if "RTC Time" not in response:  # don't log the RTC time sync response
-                    logging.debug(f"Autosampler -> PC: {response}")
+                    self.logger.debug(f"Autosampler -> PC: {response}")
                 # check if the keyword is in the response
                 if keyword and keyword not in response:
                     response = None
-                    logging.warning(
+                    self.logger.warning(
                         f"Expected keyword '{keyword}' not found in response."
                     )
         except serial.SerialException as e:
             await self.disconnect()
-            logging.error(f"Error: SerialException from {self.serial_port.name}: {e}")
+            self.logger.error(
+                f"Error: SerialException from {self.serial_port.name}: {e}"
+            )
         except serial.SerialTimeoutException as e:
             await self.disconnect()
-            logging.error(f"Timeout error: {e}")
+            self.logger.error(f"Timeout error: {e}")
         except Exception as e:
             await self.disconnect()
-            logging.error(f"Error: {e}")
+            self.logger.error(f"Error: {e}")
         finally:
             return response
 
@@ -161,9 +167,9 @@ class AutosamplerController:
             if response:
                 await callback(response)
             else:
-                logging.error(f"No valid response received for command: {command}")
+                self.logger.error(f"No valid response received for command: {command}")
         except Exception as e:
-            logging.error(f"Error in run_command_and_read: {e}")
+            self.logger.error(f"Error in run_command_and_read: {e}")
 
     async def query_rtc_time(self) -> None:
         """Query the RTC time asynchronously."""
@@ -180,9 +186,9 @@ class AutosamplerController:
                         rtc_time, "%Y-%m-%d %H:%M:%S"
                     ).timestamp()
             else:
-                logging.error(f"Failed to parse RTC time from response: {response}")
+                self.logger.error(f"Failed to parse RTC time from response: {response}")
         except Exception as e:
-            logging.error(f"Error parsing RTC time: {e}")
+            self.logger.error(f"Error parsing RTC time: {e}")
 
     async def query_config(self) -> None:
         """Query the slots configuration asynchronously."""
@@ -204,11 +210,11 @@ class AutosamplerController:
                         int(x) if x.isdigit() else x.lower(),
                     ),
                 )
-            logging.info(f"Slots populated: {self.status['slots']}")
+                self.logger.info(f"Slots populated: {self.status['slots']}")
         except json.JSONDecodeError as e:
-            logging.error(f"Error decoding configuration: {e}")
+            self.logger.error(f"Error decoding configuration: {e}")
         except Exception as e:
-            logging.error(f"Error updating slots configuration: {e}")
+            self.logger.error(f"Error updating slots configuration: {e}")
 
     async def query_status(self) -> None:
         """Query the autosampler status asynchronously."""
@@ -219,7 +225,7 @@ class AutosamplerController:
     async def parse_status(self, response: str) -> None:
         """Parse autosampler status, including position and direction."""
         try:
-            match = re.search(r"position: *(\d+),\s*direction: (Left|Right)", response)
+            match = re.search(r"position: (\d+), direction: (Left|Right)", response)
             if match:
                 with self.lock:
                     self.status.update(
@@ -228,13 +234,13 @@ class AutosamplerController:
                             "direction": match.group(2),
                         }
                     )
-                logging.info(
-                    f"Autosampler status: position {self.status['position']}, direction {self.status['direction']}"
-                )
+                    self.logger.info(
+                        f"Autosampler status: position {self.status['position']}, direction {self.status['direction']}"
+                    )
             else:
-                logging.error(f"Invalid status response: {response}")
+                self.logger.error(f"Invalid status response: {response}")
         except Exception as e:
-            logging.error(f"Error parsing status: {e}")
+            self.logger.error(f"Error parsing status: {e}")
 
     async def goto_position(self, position: str) -> None:
         """Go to a specific position and update status."""
@@ -247,16 +253,16 @@ class AutosamplerController:
                         self.parse_goto_position,  # Callback to handle the response
                     )
                 else:
-                    logging.error("Invalid position input.")
+                    self.logger.error("Invalid position input.")
             except Exception as e:
-                logging.error(f"Error going to position: {e}")
+                self.logger.error(f"Error going to position: {e}")
 
     # Example response: moved to position 1000 in 0.004037 seconds. relative position: 0
     async def parse_goto_position(self, response: str) -> None:
         """Parse the response from the goto_position command and update status."""
         try:
             match = re.search(
-                r"moved to position (\d+) in (\d+\.\d+) seconds. relative position: (\d+)",
+                r"moved to position (\d+) in (\S+) seconds. relative position: (\d+)",
                 response,
             )
             if match:
@@ -264,13 +270,13 @@ class AutosamplerController:
                 relative_position = int(match.group(3))
                 with self.lock:
                     self.status["position"] = position
-                logging.info(
+                self.logger.info(
                     f"Moved to position {position} (relative position: {relative_position})"
                 )
             else:
-                logging.error(f"Invalid response format for position: {response}")
+                self.logger.error(f"Invalid response format for position: {response}")
         except Exception as e:
-            logging.error(f"Error parsing goto position response: {e}")
+            self.logger.error(f"Error parsing goto position response: {e}")
 
     async def goto_slot(self, slot: str) -> None:
         """Go to a specific slot asynchronously and update status."""
@@ -283,16 +289,16 @@ class AutosamplerController:
                         self.parse_goto_slot,  # Callback to handle the response
                     )
                 else:
-                    logging.error("Invalid slot input.")
+                    self.logger.error("Invalid slot input.")
             except Exception as e:
-                logging.error(f"Error going to slot: {e}")
+                self.logger.error(f"Error going to slot: {e}")
 
     # Response format: Info: moved to slot 1 in 0.005856 seconds. relative position: 0
     async def parse_goto_slot(self, response: str) -> None:
         """Parse the response from the goto_slot command and update status."""
         try:
             match = re.search(
-                r"moved to slot (\d+) in (\d+\.\d+) seconds. relative position: (\d+)",
+                r"moved to slot (\S+) in (\S+) seconds. relative position: (\S+)",
                 response,
             )
             if match:
@@ -300,11 +306,84 @@ class AutosamplerController:
                 relative_position = int(match.group(3))
                 with self.lock:
                     self.status["slot"] = slot
-                    self.status["relative_position"] = relative_position
-                logging.info(
+                    # update the position based on the slot configuration
+                    self.status["position"] = self.status["slots_configuration"][
+                        str(slot)
+                    ]["position"]
+                self.logger.info(
                     f"Moved to slot {slot} (relative position: {relative_position})"
                 )
             else:
-                logging.error(f"Invalid response format for slot: {response}")
+                self.logger.error(f"Invalid response format for slot: {response}")
         except Exception as e:
-            logging.error(f"Error parsing goto slot response: {e}")
+            self.logger.error(f"Error parsing goto slot response: {e}")
+
+    async def add_slot(self, slot_name: str, slot_position: int) -> None:
+        """Add a slot with the specified name and position."""
+        try:
+            await self.run_command_and_read(
+                f"addslot:{slot_name}:{slot_position}",
+                f"Success: Slot '{slot_name}' added at position {slot_position}.",
+                self.parse_add_slot,
+            )
+        except Exception as e:
+            self.logger.error(f"Error adding slot: {e}")
+
+    async def parse_add_slot(self, response: str) -> None:
+        """Parse the response after adding a slot."""
+        try:
+            if "Success" in response:
+                await self.query_config()  # Update configuration after adding a slot
+            else:
+                self.logger.error(f"Failed to add slot: {response}")
+        except Exception as e:
+            self.logger.error(f"Error parsing add slot response: {e}")
+
+    async def remove_slot(self, slot_name: str) -> None:
+        """Remove a slot with the specified name."""
+        try:
+            if not slot_name:
+                self.logger.error("Invalid slot name.")
+                return
+            await self.run_command_and_read(
+                f"removeslot:{slot_name}",
+                f"Success: Slot '{slot_name}' removed.",
+                self.parse_remove_slot,
+            )
+        except Exception as e:
+            self.logger.error(f"Error removing slot: {e}")
+
+    async def parse_remove_slot(self, response: str) -> None:
+        """Parse the response after removing a slot."""
+        try:
+            if "Success" in response:
+                await self.query_config()  # Update configuration after removing a slot
+            else:
+                self.logger.error(f"Failed to remove slot: {response}")
+        except Exception as e:
+            self.logger.error(f"Error parsing remove slot response: {e}")
+
+    async def move_one_step(self, direction: str) -> None:
+        """Move the autosampler one step to the left or right."""
+        try:
+            if direction not in ["left", "right"]:
+                self.logger.error("Invalid direction. Use 'left' or 'right'.")
+                return
+            await self.run_command_and_read(
+                f"move:{direction}",
+                f"Success: Moved one step {direction}.",
+                self.parse_move_one_step,
+            )
+        except Exception as e:
+            self.logger.error(f"Error moving one step: {e}")
+
+    async def parse_move_one_step(self, response: str) -> None:
+        """Parse the response after moving one step."""
+        try:
+            if "Success" in response:
+                self.logger.info(response)
+                await self.query_status()  # Update status after moving one step
+            else:
+                self.logger.error(f"Failed to move one step: {response}")
+        except Exception as e:
+            self.logger.error(f"Error parsing move one step response: {e}")

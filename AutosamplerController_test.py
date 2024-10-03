@@ -9,10 +9,25 @@ from AutosamplerController import (
 # Define Pi Pico vendor ID
 pico_vid = 0x2E8A
 
+
 # Set up logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
-)
+def setup_logging():
+    """Configure logging for the program and AutosamplerController."""
+    logger = logging.getLogger("AutosamplerController")
+    logger.setLevel(logging.DEBUG)  # Set logging level to DEBUG to capture all logs
+
+    # Create console handler to output logs to console
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.DEBUG)
+
+    # Create a formatter and attach it to the handler
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    ch.setFormatter(formatter)
+
+    # Add the handler to the logger
+    logger.addHandler(ch)
+
+    return logger
 
 
 def list_pico_ports():
@@ -31,6 +46,9 @@ def list_pico_ports():
 
 
 async def main():
+    # Set up logging
+    logger = setup_logging()
+
     # List available Pi Pico COM ports
     pico_ports = list_pico_ports()
 
@@ -53,79 +71,96 @@ async def main():
     manager = Manager()
     lock = Lock()
 
-    # Create the AutosamplerController object with the specified COM port and a timeout of 1 second
+    # Create the AutosamplerController object with the specified COM port, logger, and a timeout of 1 second
     controller = AutosamplerController(
         controller_id=1,
         port_name=com_port,
         serial_timeout=1,
         lock=lock,
         manager=manager,
+        logger=logger,  # Pass the logger to the controller
     )
 
-    # Show available commands
+    # Show available commands with numbers
     print(
         """
     Available commands:
-    1. connect - Connect to the autosampler.
-    2. disconnect - Disconnect from the autosampler.
-    3. goto_position [position] - Move to a specific position.
-    4. goto_slot [slot] - Move to a specific slot.
-    5. query_status - Query the autosampler status.
-    6. query_rtc - Query the RTC time.
-    7. query_config - Query the slot configuration.
-    8. exit - Exit the program.
+    1. Connect to the autosampler.
+    2. Disconnect from the autosampler.
+    3. Go to a specific position.
+    4. Go to a specific slot.
+    5. Query the autosampler status.
+    6. Query the RTC time.
+    7. Query the slot configuration.
+    8. Print the status dictionary.
+    9. Add a slot.
+    10. Remove a slot.
+    11. Move one step (left or right).
+    12. Exit the program.
     """
     )
 
     while True:
-        # Take user input
-        command = input("Enter a command: ")
+        try:
+            # Take user input for a command number
+            command = input("Enter a command number: ")
 
-        # Split the input into command and argument (if any)
-        parts = command.split()
+            if command == "1":  # Connect
+                result = await controller.connect()
+                print(result)
 
-        if len(parts) == 0:
-            continue
+            elif command == "2":  # Disconnect
+                result = await controller.disconnect()
+                print(result)
 
-        cmd = parts[0]
-
-        if cmd == "connect":
-            result = await controller.connect()
-            print(result)
-
-        elif cmd == "disconnect":
-            result = await controller.disconnect()
-            print(result)
-
-        elif cmd == "goto_position":
-            if len(parts) == 2:
-                position = parts[1]
+            elif command == "3":  # Go to a specific position
+                position = input("Enter the position: ")
                 await controller.goto_position(position)
-            else:
-                print("Usage: goto_position [position]")
 
-        elif cmd == "goto_slot":
-            if len(parts) == 2:
-                slot = parts[1]
+            elif command == "4":  # Go to a specific slot
+                slot = input("Enter the slot: ")
                 await controller.goto_slot(slot)
+
+            elif command == "5":  # Query the status
+                await controller.query_status()
+
+            elif command == "6":  # Query RTC time
+                await controller.query_rtc_time()
+
+            elif command == "7":  # Query slot configuration
+                await controller.query_config()
+
+            elif command == "8":  # Print status dictionary
+                with controller.lock:
+                    print("Status Dictionary:")
+                    for key, value in controller.status.items():
+                        print(f"{key}: {value}")
+
+            elif command == "9":  # Add a slot
+                slot_name = input("Enter the slot name: ")
+                slot_position = input("Enter the slot position: ")
+                await controller.add_slot(slot_name, slot_position)
+
+            elif command == "10":  # Remove a slot
+                slot_name = input("Enter the slot name: ")
+                await controller.remove_slot(slot_name)
+
+            elif command == "11":  # Move one step (left or right)
+                direction = input("Enter direction (left or right): ").strip().lower()
+                if direction not in ["left", "right"]:
+                    print("Invalid direction. Please enter 'left' or 'right'.")
+                else:
+                    await controller.move_one_step(direction)
+
+            elif command == "12":  # Exit
+                print("Exiting...")
+                break
+
             else:
-                print("Usage: goto_slot [slot]")
+                print("Invalid command. Please enter a number from 1 to 12.")
 
-        elif cmd == "query_status":
-            await controller.query_status()
-
-        elif cmd == "query_rtc":
-            await controller.query_rtc_time()
-
-        elif cmd == "query_config":
-            await controller.query_config()
-
-        elif cmd == "exit":
-            print("Exiting...")
-            break
-
-        else:
-            print("Invalid command. Please try again.")
+        except Exception as e:
+            print(f"Error: {e}")
 
 
 # Run the program

@@ -21,7 +21,9 @@ def setup_logging():
     ch.setLevel(logging.DEBUG)
 
     # Create a formatter and attach it to the handler
-    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    formatter = logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(message)s [%(funcName)s]"
+    )
     ch.setFormatter(formatter)
 
     # Add the handler to the logger
@@ -92,11 +94,12 @@ async def main():
     5. Query the autosampler status.
     6. Query the RTC time.
     7. Query the slot configuration.
-    8. Print the status dictionary.
-    9. Add a slot.
-    10. Remove a slot.
-    11. Move one step (left or right).
-    12. Exit the program.
+    8. Add a new slot.
+    9. Remove a slot.
+    10. Move one step left or right.
+    11. Save the configuration.
+    12. Print the status dictionary.
+    13. Exit the program.
     """
     )
 
@@ -130,34 +133,37 @@ async def main():
             elif command == "7":  # Query slot configuration
                 await controller.query_config()
 
-            elif command == "8":  # Print status dictionary
+            elif command == "8":  # Add a new slot
+                slot_name = input("Enter the slot name: ")
+                slot_position = input("Enter the slot position: ")
+                await controller.add_slot(slot_name, slot_position)
+
+            elif command == "9":  # Remove a slot
+                slot_name = input("Enter the slot name to remove: ")
+                await controller.remove_slot(slot_name)
+
+            elif command == "10":  # Move one step left or right
+                direction = input("Enter direction (left or right): ").lower()
+                if direction in ["left", "right"]:
+                    await controller.move_one_step(direction)
+                else:
+                    print("Invalid direction. Please enter 'left' or 'right'.")
+
+            elif command == "11":  # Save the configuration
+                await controller.save_config()
+
+            elif command == "12":  # Print status dictionary
                 with controller.lock:
                     print("Status Dictionary:")
                     for key, value in controller.status.items():
                         print(f"{key}: {value}")
 
-            elif command == "9":  # Add a slot
-                slot_name = input("Enter the slot name: ")
-                slot_position = input("Enter the slot position: ")
-                await controller.add_slot(slot_name, slot_position)
-
-            elif command == "10":  # Remove a slot
-                slot_name = input("Enter the slot name: ")
-                await controller.remove_slot(slot_name)
-
-            elif command == "11":  # Move one step (left or right)
-                direction = input("Enter direction (left or right): ").strip().lower()
-                if direction not in ["left", "right"]:
-                    print("Invalid direction. Please enter 'left' or 'right'.")
-                else:
-                    await controller.move_one_step(direction)
-
-            elif command == "12":  # Exit
+            elif command == "13":  # Exit
                 print("Exiting...")
                 break
 
             else:
-                print("Invalid command. Please enter a number from 1 to 12.")
+                print("Invalid command. Please enter a number from 1 to 13.")
 
         except Exception as e:
             print(f"Error: {e}")

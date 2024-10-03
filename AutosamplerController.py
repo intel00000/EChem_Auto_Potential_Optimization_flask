@@ -134,12 +134,15 @@ class AutosamplerController:
                 response = self.serial_port.readline().decode("utf-8").strip()
                 if "RTC Time" not in response:  # don't log the RTC time sync response
                     self.logger.debug(f"Autosampler -> PC: {response}")
-                # check if the keyword is in the response
-                if keyword and keyword not in response:
+                if "Error" in response:
+                    self.logger.error(f"{response}")
                     response = None
+                # check if the keyword is in the response
+                if keyword and response and keyword not in response:
                     self.logger.warning(
-                        f"Expected keyword '{keyword}' not found in response."
+                        f"Expected keyword '{keyword}' not found in response '{response}'"
                     )
+                    response = None
         except serial.SerialException as e:
             await self.disconnect()
             self.logger.error(
@@ -162,12 +165,9 @@ class AutosamplerController:
                 send_task = tg.create_task(self.send_command(command))
                 # Add read_serial task to the group
                 read_task = tg.create_task(self.read_serial(keyword))
-
             response = read_task.result()
             if response:
                 await callback(response)
-            else:
-                self.logger.error(f"No valid response received for command: {command}")
         except Exception as e:
             self.logger.error(f"Error in run_command_and_read: {e}")
 
@@ -292,18 +292,18 @@ class AutosamplerController:
         """Parse the response from the goto_slot command and update status."""
         try:
             match = re.search(
-                r"moved to slot (\S+) in (\S+) seconds. relative position: (\S+)",
+                r"moved to slot (\S+)",
                 response,
             )
             if match:
-                slot = int(match.group(1))
-                relative_position = int(match.group(3))
+                slot = str(match.group(1))
                 with self.lock:
-                    self.status["slot"] = slot
-                    # update the position based on the slot configuration
-                    self.status["position"] = self.status["slots_configuration"][
-                        str(slot)
-                    ]["position"]
+                    position = self.status["slots_configuration"].get(slot, -1)
+                    self.status["position"] = position
+                if position == -1:
+                    self.logger.error(f"Slot not found in local configuration: {slot}")
+                else:
+                    self.logger.info(f"Moved to slot {slot} (position: {position})")
             else:
                 self.logger.error(f"Invalid response format for slot: {response}")
         except Exception as e:
@@ -362,7 +362,7 @@ class AutosamplerController:
                 return
             await self.run_command_and_read(
                 f"move:{direction}",
-                f"Success: Moved one step {direction}.",
+                f"Success: Moved one step",
                 self.parse_move_one_step,
             )
         except Exception as e:
@@ -371,10 +371,36 @@ class AutosamplerController:
     async def parse_move_one_step(self, response: str) -> None:
         """Parse the response after moving one step."""
         try:
-            if "Success" in response:
-                self.logger.info(response)
-                await self.query_status()  # Update status after moving one step
-            else:
-                self.logger.error(f"Failed to move one step: {response}")
+            # format Success: Moved one step Left, current position: 701
+            match = re.search(
+                r"Moved one step (\S+), current position: (\d+)", response
+            )
+            direction = match.group(1)
+            position = int(match.group(2))
+            with self.lock:
+                self.status["position"] = position
+                self.status["direction"] = direction
+            self.logger.info(response)
         except Exception as e:
             self.logger.error(f"Error parsing move one step response: {e}")
+
+    async def save_config(self) -> None:
+        """Send a command to save the current configuration to the Pico's storage."""
+        try:
+            await self.run_command_and_read(
+                "save_config",  # Command to save the configuration
+                "Success: Configuration saved:",  # Expected success message
+                self.parse_save_config,  # Callback to handle the response
+            )
+        except Exception as e:
+            self.logger.error(f"Error saving configuration: {e}")
+
+    async def parse_save_config(self, response: str) -> None:
+        """Parse the response after saving the configuration."""
+        try:
+            if "Success" in response:
+                self.logger.info("Configuration saved successfully.")
+            else:
+                self.logger.error(f"Failed to save configuration: {response}")
+        except Exception as e:
+            self.logger.error(f"Error parsing save configuration response: {e}")

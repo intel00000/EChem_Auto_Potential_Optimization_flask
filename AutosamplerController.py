@@ -174,11 +174,7 @@ class AutosamplerController:
         try:
             match = re.search(r"RTC Time: (\d+-\d+-\d+ \d+:\d+:\d+)", response)
             if match:
-            rtc_time = match.group(1)
-            rtc_time = match.group(1)
-            if rtc_time:
                 rtc_time = match.group(1)
-            if rtc_time:
                 with self.lock:
                     self.status["rtc_time"] = datetime.strptime(
                         rtc_time, "%Y-%m-%d %H:%M:%S"

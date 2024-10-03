@@ -234,9 +234,6 @@ class AutosamplerController:
                             "direction": match.group(2),
                         }
                     )
-                    self.logger.info(
-                        f"Autosampler status: position {self.status['position']}, direction {self.status['direction']}"
-                    )
             else:
                 self.logger.error(f"Invalid status response: {response}")
         except Exception as e:
@@ -282,14 +279,11 @@ class AutosamplerController:
         """Go to a specific slot asynchronously and update status."""
         if self.is_connected():
             try:
-                if slot in self.status["slots"]:
-                    await self.run_command_and_read(
-                        f"slot:{slot}",
-                        "moved to slot",  # Look for this keyword in the response
-                        self.parse_goto_slot,  # Callback to handle the response
-                    )
-                else:
-                    self.logger.error("Invalid slot input.")
+                await self.run_command_and_read(
+                    f"slot:{slot}",
+                    "moved to slot",  # Look for this keyword in the response
+                    self.parse_goto_slot,  # Callback to handle the response
+                )
             except Exception as e:
                 self.logger.error(f"Error going to slot: {e}")
 
@@ -310,9 +304,6 @@ class AutosamplerController:
                     self.status["position"] = self.status["slots_configuration"][
                         str(slot)
                     ]["position"]
-                self.logger.info(
-                    f"Moved to slot {slot} (relative position: {relative_position})"
-                )
             else:
                 self.logger.error(f"Invalid response format for slot: {response}")
         except Exception as e:

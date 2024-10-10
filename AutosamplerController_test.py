@@ -2,9 +2,7 @@ import asyncio
 import serial.tools.list_ports
 from multiprocessing import Manager, Lock
 import logging
-from AutosamplerController import (
-    AutosamplerController,
-)  # Assuming this is in the same directory/module
+from AutosamplerController import AutosamplerController
 
 # Define Pi Pico vendor ID
 pico_vid = 0x2E8A

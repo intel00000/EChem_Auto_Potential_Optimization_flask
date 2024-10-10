@@ -41,12 +41,12 @@ class AutosamplerController:
 
         self.logger.info(f"Autosampler controller {controller_id} created.")
 
-    def is_connected(self) -> bool:
+    def __is_connected(self) -> bool:
         return self.serial_port is not None and self.serial_port.is_open
 
     async def connect(self) -> str:
         """Connect to the serial port asynchronously."""
-        if self.is_connected():
+        if self.__is_connected():
             await self.disconnect()
         try:
             self.serial_port.open()
@@ -82,7 +82,7 @@ class AutosamplerController:
     async def disconnect(self) -> str:
         """Disconnect from the serial port asynchronously."""
         try:
-            if self.is_connected():
+            if self.__is_connected():
                 self.serial_port.close()  # close the serial port
                 self.logger.info(f"Disconnected from {self.serial_port.name}")
                 # Reset the status dictionary
@@ -105,11 +105,10 @@ class AutosamplerController:
     async def send_command(self, command: str) -> str:
         """Send command asynchronously."""
         try:
-            if self.is_connected():
-                self.serial_port.write(f"{command.strip()}\n".encode())
-                if "time" not in command:
-                    self.logger.debug(f"PC -> Pico: {command}")
-                return f"Success: Command sent: {command}"
+            self.serial_port.write(f"{command.strip()}\n".encode())
+            if "time" not in command:
+                self.logger.debug(f"PC -> Pico: {command}")
+            return f"Success: Command sent: {command}"
         except serial.SerialException as e:
             await self.disconnect()
             self.logger.error(
@@ -129,20 +128,19 @@ class AutosamplerController:
         """Read serial data asynchronously, check if specific keyword is in the response."""
         response = None
         try:
-            if self.is_connected():
-                # read the serial port, will block until a response is received
-                response = self.serial_port.readline().decode("utf-8").strip()
-                if "RTC Time" not in response:  # don't log the RTC time sync response
-                    self.logger.debug(f"Autosampler -> PC: {response}")
-                if "Error" in response:
-                    self.logger.error(f"{response}")
-                    response = None
-                # check if the keyword is in the response
-                if keyword and response and keyword not in response:
-                    self.logger.warning(
-                        f"Expected keyword '{keyword}' not found in response '{response}'"
-                    )
-                    response = None
+            # read the serial port, will block until a response is received
+            response = self.serial_port.readline().decode("utf-8").strip()
+            if "RTC Time" not in response:  # don't log the RTC time sync response
+                self.logger.debug(f"Autosampler -> PC: {response}")
+            if "Error" in response:
+                self.logger.error(f"{response}")
+                response = None
+            # check if the keyword is in the response
+            if keyword and response and keyword not in response:
+                self.logger.warning(
+                    f"Expected keyword '{keyword}' not found in response '{response}'"
+                )
+                response = None
         except serial.SerialException as e:
             await self.disconnect()
             self.logger.error(
@@ -160,14 +158,19 @@ class AutosamplerController:
     async def run_command_and_read(self, command: str, keyword: str, callback):
         """Run send_command and read_serial concurrently using TaskGroup."""
         try:
-            async with asyncio.TaskGroup() as tg:
-                # Add send_command task to the group
-                send_task = tg.create_task(self.send_command(command))
-                # Add read_serial task to the group
-                read_task = tg.create_task(self.read_serial(keyword))
-            response = read_task.result()
-            if response:
-                await callback(response)
+            if self.__is_connected():
+                async with asyncio.TaskGroup() as tg:
+                    # Add send_command task to the group
+                    send_task = tg.create_task(self.send_command(command))
+                    # Add read_serial task to the group
+                    read_task = tg.create_task(self.read_serial(keyword))
+                response = read_task.result()
+                if response:
+                    await callback(response)
+            else:
+                with self.lock:
+                    self.status["connected"] = False
+                self.logger.error("Not connected to the serial port.")
         except Exception as e:
             self.logger.error(f"Error in run_command_and_read: {e}")
 
@@ -241,7 +244,7 @@ class AutosamplerController:
 
     async def goto_position(self, position: str) -> None:
         """Go to a specific position and update status."""
-        if self.is_connected():
+        if self.__is_connected():
             try:
                 if position.isdigit():
                     await self.run_command_and_read(
@@ -277,7 +280,7 @@ class AutosamplerController:
 
     async def goto_slot(self, slot: str) -> None:
         """Go to a specific slot asynchronously and update status."""
-        if self.is_connected():
+        if self.__is_connected():
             try:
                 await self.run_command_and_read(
                     f"slot:{slot}",
